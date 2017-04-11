@@ -1,0 +1,255 @@
+" 3/18/1999 ";
+" shop at 3 stores";
+"";
+shopper = this;
+whouse = shopper.home;
+im = $g.interface_messages;
+su = $string_utils;
+pause_val = 5;
+"";
+" need to stall the shoppers from time to time ";
+"";
+while (shopper.pause_shopping)
+  $g:inform($su:nn(shopper), ".pause_shopping = ", shopper.pause_shopping, ", shopping is paused");
+  suspend($g.ten_minutes);
+endwhile
+"";
+" New shopping routine 4/25/1999";
+"";
+suspend(random(10));
+"";
+$g:inform("Shopper: ", shopper, " starts its shopping run.");
+"";
+"try -- removed for debugging, 22apr11, bms ";
+"==>BD-MOD 4/26/11: Modified the shopping verb to go throught the shopping_list more randomly.<==";
+numOfProducts = 0;
+unVisitedInd = {};
+"";
+"Create a list of all the possible indexes of the shoppers shopping list.";
+"Also check for invalid entries in the shopping list, this may be removed when all products are valid";
+"";
+for itm in (shopper.shopping_list)
+  numOfProducts = numOfProducts + 1;
+  unVisitedInd = setadd(unVisitedInd, numOfProducts);
+  "";
+  "==>MOD-BD 5/5/11: check to make sure the weekly demand isnt too high.<==";
+  "";
+  if (itm[2] > 1000)
+    $g:inform("Shopper Error: ", su:nn(shopper), " had an invalid weekly demand for ", su:nn(itm[1]), " Current weekly demand: ", itm[2]);
+    "==>MOD-BD 5/5/11: Choose this value just as a temporary fix for weekly demand that are too high.<==";
+    shopper.shopping_list[numOfProducts][2] = 100;
+    $g:inform(su:space(8), "Decrementing the shopping_list's Weekly Demand to QTY: ", shopper.shopping_list[numOfProducts][2]);
+  endif
+endfor
+"";
+ind = 0;
+"==>BD-MOD 4/26/11: Loop through all of the products in the shoppers shopping list decrementing the weekly demand one at a time.";
+while (numOfProducts)
+  "==>MOD-BD 4/26/11: Randomly select an index for the list of remaining valid indexes the current shopping_list<==";
+  ind = random(numOfProducts);
+  "";
+  "==>MOD-BD 4/26/11: Set the actual index of the shopping list item to be used in the next iteration<==";
+  prodInd = unVisitedInd[ind];
+  "";
+  "log the current product";
+  shopper.current_product = shopper.shopping_list[prodInd][1];
+  "";
+  tries = 1;
+  satisfied = 0;
+  "";
+  "MOD - stores_to_visit will return a list of the best three stores to visit. bm/kk 05/05/09";
+  "";
+  shopper.stores_to_visit = shopper:find_best_three(shopper.current_product);
+  "==>BD-MOD 4/26/11: Loop on the selected product until the weeklydemand has been decremented to 0";
+  "";
+  "Check 3 stores for current product or until satisfied";
+  while (tries < 4 && !satisfied)
+    "";
+    " Find a store ";
+    store = shopper.stores_to_visit[tries];
+    "";
+    "There are no stores with this product so, continue on with the next iteration of the next product";
+    "of the currently selected product in the shopping_list";
+    if (store == 0)
+      shopper.shopping_list[prodInd][2] = 0;
+      break;
+    endif
+    "";
+    "shopper.stores_visited = {@shopper.stores_visited, store}; removed, as unneeded. bm/kk 05/05/09";
+    "log visit to store";
+    "";
+    shopper.current_store = store;
+    employee = store.employee;
+    "";
+    "Move the shopper to the street infront of the store and use entrence";
+    "";
+    try
+      " move(shopper, street = whouse:get_stores_street(store)); replaced with a wizardly verb, bms, 27apr11 ";
+      street = whouse:get_stores_street(store);
+      $g:move_shopper_to_street(shopper, street);
+    except p (ANY)
+      " hit a bad store, so exit the while loop, bms, 4may05";
+      $g:inform("Bad Store Errors ", toliteral(p));
+      "MOD from tries = 3, to tries = tries + 1. So one bad store will not stop shopping for this item. bm/kk 05/05/09";
+      tries = tries + 1;
+      continue;
+    endtry
+    "";
+    if (shopper.location in $list_utils:map_prop(connected_players(), "location"))
+      " if there is a connected player in the room, speak to them - bms, 9dec2011";
+      " $g:inform(\"here we are \", su:nn(shopper)); ";
+      im:speak(shopper, "Hi, I am pausing here for a few seconds to say Hi!");
+    endif
+    suspend(pause_val);
+    "";
+    for exit in ($g:get_exits(street))
+      if (exit.dest == store)
+        exit:move(shopper);
+      endif
+    endfor
+    "";
+    $g:inform("Shop: ", su:nn(shopper), " shops at ", su:nn(store), " for ", su:nn(shopper.current_product));
+    suspend(8);
+    "Increment visits by one in shopper's stores property -- SJH|2007";
+    "";
+    store_index = $list_utils:iassoc(store, shopper.stores);
+    shopper.stores[store_index][4] = shopper.stores[store_index][4] + 1;
+    "";
+    im:speak(shopper, "Hi there.");
+    suspend(2);
+    if (typeof(employee) == OBJ)
+      "";
+      " changed the summon to prevent indefinite waiting, bms, 2/may09 ";
+      summonval = employee:summon();
+      "";
+      if (summonval == employee.busy)
+        "return 0;";
+        "MOD - instead of returning 0, skip this store and proceed as normal. bm/kk 05/05/09";
+        tries = tries + 1;
+        continue;
+      endif
+      "";
+      suspend(4);
+      "";
+      im:speak(shopper, "I'm looking for " + shopper.current_product.name);
+      "";
+      "Get a list of shipments applicable to our purchase";
+      "";
+      found = {};
+      "";
+      try
+        "";
+        found = employee:price_check(shopper.current_product);
+        "";
+        "Returns {Shipment#,product, qty, price}";
+        " #2:tell(\"found = \", toliteral(found)); ";
+        suspend(4);
+        "";
+        "else";
+        "throw the exception";
+        "";
+      except (ANY)
+        "";
+        $g:inform("No Employee set for ", shopper.location, " looking for ", shopper.current_product);
+        im:speak(shopper, "hmm, no employee around, I'll try back later");
+        "";
+      endtry
+      "";
+      if (length(found) > 0)
+        "decide to buy? need to calculate want/need/benefits.";
+        decide = this:consider_price(found);
+        if (decide != 1)
+          store.proprietor.accounting:sell_product(shopper, found[1][1]);
+          im:speak(shopper, "I'm buying " + toliteral(decide) + " thanks");
+          satisfied = 1;
+          "";
+          if (shopper.shopping_list[prodInd][2] > 1)
+            "==>BD-MOD 5/5/11 decrement the weekly demand for the shoppers shopping list by one,";
+            "if the current demand is greater than 1.<==";
+            shopper.shopping_list[prodInd][2] = 0;
+          else
+            "==>BD-MOD 5/5/11 Once the shopper has shopped for the weekly demand for the current item";
+            "remove it from the unvisited list, and decrement the number of remaining products.<==";
+            unVisitedInd = setremove(unVisitedInd, unVisitedInd[ind]);
+            shopper.shopping_list[prodInd][2] = shopper.shopping_list[prodInd][2] - 1;
+            numOfProducts = numOfProducts - 1;
+          endif
+          $g:inform("The shopper ", shopper.name, " successfully bought ", su:nn(shopper.shopping_list[prodInd][1]), ", ", shopper.shopping_list[prodInd][2], "more to go.");
+          "";
+          "Increment successful visits by one in shopper's stores property -- SJH|2007";
+          "MOD guywiz 4-19-07";
+          "WAS";
+          "shopper.stores[store][4] = shopper.stores[store][4] + 1;";
+          "Finding an index to a list in a list of lists is a little more complex than that.";
+          "IS";
+          store_index = $list_utils:iassoc(store, shopper.stores);
+          shopper.stores[store_index][5] = shopper.stores[store_index][5] + 1;
+        else
+          im:speak(shopper, "No thanks, not today.");
+        endif
+      else
+        im:speak(shopper, "That's too bad, thanks anyways.");
+      endif
+      "";
+      if (random(2) == 1)
+        try
+          im:speak(shopper, "Later " + store.proprietor.name);
+        except (ANY)
+          im:speak(shopper, "Bye.");
+        endtry
+      else
+        im:speak(shopper, "Thanks");
+      endif
+      "";
+      suspend(5);
+      "";
+      tries = tries + 1;
+      "";
+      " Find exit to street and exit store";
+      "";
+      for exit in ($g:get_exits(store))
+        if (exit.dest == street)
+          exit:move(shopper);
+        endif
+      endfor
+      "";
+      suspend(1);
+      employee:resume_event();
+      suspend(2);
+      "";
+    else
+      "the employee is not an object, and this store is hosed -- move on to the next one ";
+      $g:inform("No Employee set for ", shopper.location, " looking for ", shopper.current_product);
+      "tries = 3;";
+      "MOD - skip this one and continue shopping as normal. bm/kk 05/05/09";
+      tries = tries + 1;
+      continue;
+    endif
+  endwhile
+  "==>BD-MOD 4/26/11: Decrement the Weekly Demand for this shopper's current item, if not successfull at best 3 stores";
+  if (shopper.shopping_list[prodInd][2] > 1)
+    "==>BD-MOD 5/5/11 decrement the weekly demand for the shoppers shopping list by one,";
+    "if the current demand is greater than 1.<==";
+    shopper.shopping_list[prodInd][2] = shopper.shopping_list[prodInd][2] - 1;
+  else
+    "==>BD-MOD 5/5/11 Once the shopper has shopped for the weekly demand for the current item";
+    "remove it from the unvisited list, and decrement the number of remaining products.<==";
+    unVisitedInd = setremove(unVisitedInd, unVisitedInd[ind]);
+    shopper.shopping_list[prodInd][2] = 0;
+    numOfProducts = numOfProducts - 1;
+  endif
+  "";
+  "";
+endwhile
+if (shopper.location != shopper.home)
+  " move(shopper, shopper.home); changed to avoid permission errors, bms, 27apr11 ";
+  $g:move_shopper_to_street(shopper, shopper.home);
+endif
+" except v (ANY)  -- removed for debugging, 22apr11, bms ";
+"return any crashed shoppers home.";
+" move(shopper, shopper.home);  -- removed for debugging, 22apr11, bms ";
+" $g.bug_db:log_error(v);  -- removed for debugging, 22apr11, bms ";
+" endtry  -- removed for debugging, 22apr11, bms ";
+player:tell("shopper ", $string_utils:nn(shopper), " list is ", toliteral(shopper.shopping_list));
+shopper:return_from_shopping();
+return "return from shop";

@@ -1,0 +1,3 @@
+this is for topics work so we have source control.
+
+we need to decouple this shop verb so that we can have the shoppers shop for vegetables in addition to everything else
